@@ -1,0 +1,347 @@
+#### Soper et al. 2021. A roadmap for sampling and scaling biological nitrogen fixation in terrestrial ecosystems. Methods in Ecology and Evolution.
+#### Appendix R Code.
+#### Plot-scale BNF by combining nodule coring with 15N2 gas incubations
+#### Last Updated by Ben Taylor - Nov. 2020
+
+################################################################################
+#################### 1.1. and 1.2 DATA SIMULATION ##############################
+################################################################################
+
+#### Section 1.1
+#### First, a dataframe of soil cores sampled from 4 plots (A,B,C,D) that differ
+#### slightly in the proportion of nodules with cores. There are different numbers
+#### of cores for each plot to represent a SACS sampling campaign where additional 
+#### cores are taken around a core that has nodules until no additional cores 
+#### have nodules. 
+
+#Setting the number of total cores taken in each plot, A-D
+A_numcores<-54
+B_numcores<-62
+C_numcores<-66
+D_numcores<-70
+
+#Setting the proportion of cores in each plot that contain nodules
+A_p<-.16
+B_p<-.16
+C_p<-.13
+D_p<-.16
+  
+#Setting the number of cores that do not contain nodules
+A_emptycores<-round(A_numcores*(1-A_p))
+B_emptycores<-round(B_numcores*(1-B_p))
+C_emptycores<-round(C_numcores*(1-C_p)) 
+D_emptycores<-round(D_numcores*(1-D_p))
+
+#Simulating mass of nodules (in cores that contain them)
+set.seed(42)
+nod.core<-data.frame(plot=c(rep("A",A_numcores),rep("B",B_numcores),rep("C",C_numcores),rep("D",D_numcores)),
+                     core=c(seq(A_numcores),seq(B_numcores),seq(C_numcores),seq(D_numcores)),
+                     nod.num=as.numeric(c(c(rep(0,A_emptycores),rpois((A_numcores-A_emptycores),1)+1),
+                                          c(rep(0,B_emptycores),rpois((B_numcores-B_emptycores),1)+1),
+                                          c(rep(0,C_emptycores),rpois((C_numcores-C_emptycores),1)+1),
+                                          c(rep(0,D_emptycores),rpois((D_numcores-D_emptycores),1)+1))))
+nod.core$nod.mass<-ifelse(nod.core$nod.num==0, yes=0, 
+                          no=rlnorm(nrow(nod.core[nod.core$nod.num>0,]),meanlog=-3))
+nod.core$plt.core<-paste(nod.core$plot,".",nod.core$core)
+hist(nod.core[nod.core$nod.mass>0,]$nod.mass, breaks=20)
+
+#write.csv(nod.core, file="Simulated Coring Data for SNF.csv", row.names=F)
+
+#### Section 1.2
+#### Next, a dataframe simulating isotopic 15N2 gas incubations conducted on a subset of the 
+#### nodules collected in "nod.core" sampling campaign. Because 15N2 gas incubations are 
+#### typically cost-limiting, we simulate data representing a scenario where the researcher
+#### could only conduct incubations on nodules from 10 cores per plot but that all
+#### nodules for a core were pooled into one incubation for that core. All nodules
+#### for an incubation were ground and homogonized together for isotopic analyses.
+
+#Function to convert from percent 15N to delta 15N
+
+per.delt<-function(x){s<-(x/100)/(1-(x/100))
+1000*((s-0.003663)/0.003663)}
+
+#Setting the number of incubations conducted in each plot. Some plots don't have 
+#10 cores that contain nodules, so they have as many incubations as there are cores containing nodules
+A_numincs<-9
+B_numincs<-10
+C_numincs<-9
+D_numincs<-10
+totincs<-sum(A_numincs,B_numincs,C_numincs,D_numincs) #Calculating the total number of incubations conducted
+
+set.seed(42)
+nod.gas<-data.frame(plot=c(rep("A",A_numincs),rep("B",B_numincs),rep("C",C_numincs),rep("D",D_numincs)),
+                    core=c(sample(nod.core[nod.core$plot=="A"&nod.core$nod.mass>0,]$plt.core,A_numincs),
+                           sample(nod.core[nod.core$plot=="B"&nod.core$nod.mass>0,]$plt.core,B_numincs),
+                           sample(nod.core[nod.core$plot=="C"&nod.core$nod.mass>0,]$plt.core,C_numincs),
+                           sample(nod.core[nod.core$plot=="D"&nod.core$nod.mass>0,]$plt.core,D_numincs)),
+                    inc.time=runif(totincs,min=28,max=32),
+                    samp.mass=rnorm(n=totincs,mean=3,sd=.18),
+                    perc.N=rnorm(n=totincs,mean=3,sd=.35),
+                    perc.15N=c(rnorm(A_numincs,mean=0.375,sd=0.0075),
+                               rnorm(B_numincs,mean=0.3725,sd=0.0075),
+                               rnorm(C_numincs,mean=0.37,sd=0.005),
+                               rnorm(D_numincs,mean=0.369,sd=0.005)))
+nod.gas$perc.15N<-ifelse(nod.gas$perc.15N<0.3663, yes=runif(n=length(nod.gas$perc.15N[nod.gas$perc.15N<0.3663]) ,min=.3663, max=.3665), no=nod.gas$perc.15N)
+nod.gas$d15N<-per.delt(nod.gas$perc.15N)
+pltcrs<-nod.gas$core
+nod.gas$nod.mass<-nod.core[nod.core$plt.core%in%pltcrs,]$nod.mass
+#write.csv(nod.gas, file="Simulated Nodule 15N gas Inc Data.csv", row.names=F)
+
+################################################################################
+##### 1.3 ANALYZING GAS INCUBATIONS ############################################
+################################################################################
+
+# Chamber Volume replaced (proportion), %15N of normal atmosphere, 
+# %15N of isotopically enriched gas, and length of incubation time in hours
+cvr<-.2
+perc.15Nair<-.003663
+perc.15Ngas<-.98
+inc.time<-0.5
+
+#Expected Enrichment of Chamber Headspace during Incubation
+cham.enrich<-(perc.15Ngas*cvr)+(perc.15Nair*(1-cvr))
+
+#Now the Percent of N atoms fixed in each sample calculated by 
+#taking the difference between the measured percent 15N and percent 15N of fixation then dividing by expected enrichment
+nod.gas$perc.Nfixd<-with(nod.gas, ((perc.15N/100)-perc.15Nair)/(cham.enrich-perc.15Nair))
+
+#Calculating the total amount of N in each sample
+nod.gas$tot.N<-with(nod.gas, nod.mass*(perc.N/100))
+
+#calculating the amount of N fixed in each sample (gN fixed per sample per incubation period)
+nod.gas$Nfixd<-with(nod.gas, tot.N*perc.Nfixd)
+
+
+#Converting N fixation to units of (gN fixed per gram of nodule per year)
+time.conv<-(8760/inc.time) #the number of "half hours" in a year
+nod.gas$Nfixd<-with(nod.gas, (Nfixd/nod.mass)*time.conv)
+
+#Writing a file for the updated dataframe with N fixation rates included
+#write.csv(nod.gas, file="Nodule 15N Incubations_N Fixation Calculated.csv")
+
+################################################################################
+##### 1.4 APPLYING GAS INCUBATIONS TO CORE SAMPLING ############################
+################################################################################
+
+#Getting mean N fixation (N fixed/g of nodule/yr) values for nodules from each plot 
+inc.pltmns<-data.frame(plot=sort(unique(nod.gas$plot)),
+                       inc.Nfixd=with(nod.gas, tapply(Nfixd, plot, mean, na.rm=T)),
+                       inc.Nfixd.sd=with(nod.gas, tapply(Nfixd, plot, sd, na.rm=T)))
+
+#merging the nodule incubation N-fixation numbers into the nod.core data frame 
+nod.core<-merge(nod.core, inc.pltmns, by="plot")
+
+#Calculating the amount of N fixed (g) per core per year
+nod.core$core.fix<-with(nod.core, nod.mass*inc.Nfixd)
+
+################################################################################
+##### 1.4 Scaling N fixation to kg/ha/yr  ######################################
+################################################################################
+
+#Diameter of the core in cm
+cor.diam<-5
+
+#area of the core in cm2
+cor.ar<-((cor.diam/2)^2*pi)
+
+#Calculating N fixed in g/ha/yr for each core
+#then converting it to kg/ha/yr
+nod.core$Nfix.g.m2<-with(nod.core, (core.fix/cor.ar)*10000)
+nod.core$Nfix.kg.ha<-with(nod.core, Nfix.g.m2*10)
+
+#Data frame of plot-level averages and sd's of N fixed in kg/ha/yr
+#Numbers are averages of N fixation in all the cores in each plot
+plot.fixation<-data.frame(plot=sort(unique(nod.core$plot)),
+                          Nfix.mn=with(nod.core, tapply(Nfix.kg.ha,plot,mean, na.rm=T)),
+                          Nfix.sd=with(nod.core, tapply(Nfix.kg.ha,plot,sd, na.rm=T)))
+
+#### Error Propagation #########################################################
+
+#The above code only incorporates error from the nodule coring into the estimate
+#of standard deviation, so we need to update the "Nfix.sd" column with fully 
+#propagated error that includes uncertainty from the gas incubations as well
+
+errprop.dat<-merge(plot.fixation,inc.pltmns,by="plot")#make a data frame with means and sd for both gas incubations and nodule coring
+
+#Below, we update the "Nfix.sd" column in the plot.fixation data frame with propagated 
+#error using a rearranged version of the formula dZ/Z=sqrt((dX/X)^2+(dY/Y)^2)
+#This error term now includes uncertainty from both nodule coring and gas incubations
+plot.fixation$Nfix.sd<-with(errprop.dat, Nfix.mn*(sqrt((Nfix.sd/Nfix.mn)^2+(inc.Nfixd.sd/inc.Nfixd)^2)))
+
+#### Print the plot N fixation averages and propagated error (sd) ##############
+plot.fixation
+
+
+################################################################################
+##### 2.1 DATA SIMULATION ##########################################################
+################################################################################
+#### Here, we'll simulate a data set for calculating %Ndfa with 15N enrichment of
+#### of the soil and using a non-fixing reference plant to represent the natural soil N 
+#### isotopic ratio. The isotopic ratio of the N fixer is simulated based on enriched
+#### 15N label added to the soil, but this simulation code could be adjusted to create
+#### a data set representing a natural abundance 15N sampling campaign.
+set.seed(42)
+iso<-data.frame(plant.num=seq(240),
+                treatment=rep(rep(c("A","B","C","D"),each=30),2),
+                    plant.type=as.factor(c(rep("fixer", 120),rep("nonfixer",120))),
+                    perc.N=c(rnorm(120,mean=3.12,sd=.35),rnorm(120,mean=2.77,sd=.30)),
+                    perc.15N=rnorm(240,mean=.39,sd=.0235))
+iso$perc.15N[121:240]<-iso$perc.15N[121:240]+runif(n=120, min=0.05, max=0.2)
+
+#Note: Increasing the min and max numbers in the runif command in the final line
+#      will increase the Ndfa that you calculate AND/OR decreasing the mean number
+#      in the second-to-last line will also increase Ndfa calculated. Moving these
+#      numbers in the opposite direction will decrease Ndfa calculated.
+
+#write.csv(iso, file="Soil 15N Isotope Enrichment Data.csv",row.names=F)
+
+
+################################################################################
+##### 2.2.1 ANALYSIS OPTION 1: USING PAIRED N FIXERS AND REFERENCE PLANTS ############
+################################################################################
+# This first analysis option imagines a scenario in which you have paired N-fixing
+# and non-fixing reference plants (such as if the reference plant was grown in the
+# same pot as the N fixer). In this scenario, the mixing model uses a single value
+# for the isotopic signature of fixed N (%15N = 0.3663) and a single value for the 
+# isotopic signature of soil N (the %15N of the paired reference plant). 
+
+#We'll copy the original data frame here so that we can adjust it for Analysis Option 1
+iso.1<-iso
+
+#First, for this analysis option, we'll add in a column for each pair of plants
+iso.1$pair<-rep(seq(30),8)
+iso.1$pair<-paste(iso$treatment,"_",iso.1$pair)
+
+fix.perc.15N<-0.3663 #Using the literature value of 0.3663% for the atm%15N of 
+                    #atmospheric N2 as the expected isotopic signature of fixed N
+
+ndfavec<-NULL
+pairs<-unique(iso.1$pair)
+for(p in 1:length(pairs)){
+  temp<-iso.1[iso.1$pair==pairs[p],]
+  ndfa<-100*((temp[temp$plant.type=="fixer",]$perc.15N-temp[temp$plant.type=="nonfixer",]$perc.15N)/
+               (fix.perc.15N-temp[temp$plant.type=="nonfixer",]$perc.15N))
+  ndfavec<-c(ndfavec,ndfa)
+}
+
+iso.1$ndfa<-c(ndfavec,rep(NA,nrow(iso.1[iso.1$plant.type=="nonfixer",])))
+
+trt.summary1<-data.frame(Treatment=c("A","B","C","D"),
+                        Mean.Ndfa=with(iso.1[iso.1$plant.type=="fixer",], tapply(ndfa,treatment,mean)),
+                        SD.Ndfa=with(iso.1[iso.1$plant.type=="fixer",], tapply(ndfa,treatment,sd)))
+trt.summary1
+
+################################################################################
+##### 2.2.2 ANALYSIS OPTION 2: USING A DISTRIBUTION FOR REFERENCE PLANT 15N ##########
+################################################################################
+# This approach represents a scenario in which the researcher has a set of reference
+# plants in each group (treatments in this case) that aren't individually paired
+# with each N fixer. The mixing model uses a distribution of soil %15N values based
+# on the mean and standard deviation of the reference plant %15N within each group. 
+# The isotopic end member for fixation is a single value (0.3663 atm%)
+
+#We'll copy the original data frame here so that we can adjust it for Analysis Option 2
+iso.2<-iso
+
+#Calculating the mean and sd %15N for reference plants in each group (treatment)
+iso.2$ref.mn<-NA
+iso.2$ref.sd<-NA
+
+iso.2[iso.2$treatment=="A",]$ref.mn<-mean(iso.2[iso.2$treatment=="A"&iso.2$plant.type=="nonfixer",]$perc.15N)
+iso.2[iso.2$treatment=="A",]$ref.sd<-sd(iso.2[iso.2$treatment=="A"&iso.2$plant.type=="nonfixer",]$perc.15N)
+
+iso.2[iso.2$treatment=="B",]$ref.mn<-mean(iso.2[iso.2$treatment=="B"&iso.2$plant.type=="nonfixer",]$perc.15N)
+iso.2[iso.2$treatment=="B",]$ref.sd<-sd(iso.2[iso.2$treatment=="B"&iso.2$plant.type=="nonfixer",]$perc.15N)
+
+iso.2[iso.2$treatment=="C",]$ref.mn<-mean(iso.2[iso.2$treatment=="C"&iso.2$plant.type=="nonfixer",]$perc.15N)
+iso.2[iso.2$treatment=="C",]$ref.sd<-sd(iso.2[iso.2$treatment=="C"&iso.2$plant.type=="nonfixer",]$perc.15N)
+
+iso.2[iso.2$treatment=="D",]$ref.mn<-mean(iso.2[iso.2$treatment=="D"&iso.2$plant.type=="nonfixer",]$perc.15N)
+iso.2[iso.2$treatment=="D",]$ref.sd<-sd(iso.2[iso.2$treatment=="D"&iso.2$plant.type=="nonfixer",]$perc.15N)
+
+fix.perc.15N<-0.3663 #Using the literature value of 0.3663% for the atm%15N of 
+#atmospheric N2 as the expected isotopic signature of fixed N
+
+iters<-1000 #how many numbers to pull from the distribution based on each groups reference mean and sd
+
+
+fixers<-unique(iso.2[iso.2$plant.type=="fixer",]$plant.num)
+ndfa.mrg<-NULL
+for(i in 1:length(fixers)){
+  temp<-iso.2[iso.2$plant.num==fixers[i],]
+  ref15N<-rnorm(iters, mean=temp$ref.mn, sd=temp$ref.sd)
+  ndfa<-100*((temp$perc.15N-ref15N)/
+               (fix.perc.15N-ref15N))
+  ndfa.dat<-data.frame(plant.num=temp$plant.num,
+                       ndfa.mn=mean(ndfa),
+                       ndfa.lci=quantile(ndfa,0.025),
+                       ndfa.uci=quantile(ndfa,0.975))
+  ndfa.mrg<-rbind(ndfa.mrg,ndfa.dat)
+}
+
+iso.2<-merge(iso.2, ndfa.mrg, by="plant.num", all.x=T)
+
+trt.summary2<-data.frame(Treatment=c("A","B","C","D"),
+                         Mean.Ndfa=with(iso.2[iso.2$plant.type=="fixer",], tapply(ndfa.mn,treatment,mean)),
+                         LCI.Ndfa=with(iso.2[iso.2$plant.type=="fixer",], tapply(ndfa.lci,treatment,mean)),
+                         UCI.Ndfa=with(iso.2[iso.2$plant.type=="fixer",], tapply(ndfa.uci,treatment,mean)))
+trt.summary2
+
+
+################################################################################
+## 2.2.3 ANALYSIS OPTION 3: USING DISTRIBUTIONs FOR REFERENCE PLANT 15N AND FIXED N ##
+################################################################################
+# Like Option 2, this approach represents a scenario in which the researcher has a set of reference
+# plants in each group (treatments in this case) that aren't individually paired
+# with each N fixer. The mixing model uses a distribution of soil %15N values based
+# on the mean and standard deviation of the reference plant %15N within each group. 
+# Here, we assume some uncertainty for the isotopic end member for fixation, so
+# we represent it as a distribution of values centered around 0.3663 atm%
+
+#We'll copy the original data frame here so that we can adjust it for Analysis Option 3
+iso.3<-iso
+
+#Calculating the mean and sd %15N for reference plants in each group (treatment)
+iso.3$ref.mn<-NA
+iso.3$ref.sd<-NA
+
+iso.3[iso.3$treatment=="A",]$ref.mn<-mean(iso.3[iso.3$treatment=="A"&iso.3$plant.type=="nonfixer",]$perc.15N)
+iso.3[iso.3$treatment=="A",]$ref.sd<-sd(iso.3[iso.3$treatment=="A"&iso.3$plant.type=="nonfixer",]$perc.15N)
+
+iso.3[iso.3$treatment=="B",]$ref.mn<-mean(iso.3[iso.3$treatment=="B"&iso.3$plant.type=="nonfixer",]$perc.15N)
+iso.3[iso.3$treatment=="B",]$ref.sd<-sd(iso.3[iso.3$treatment=="B"&iso.3$plant.type=="nonfixer",]$perc.15N)
+
+iso.3[iso.3$treatment=="C",]$ref.mn<-mean(iso.3[iso.3$treatment=="C"&iso.3$plant.type=="nonfixer",]$perc.15N)
+iso.3[iso.3$treatment=="C",]$ref.sd<-sd(iso.3[iso.3$treatment=="C"&iso.3$plant.type=="nonfixer",]$perc.15N)
+
+iso.3[iso.3$treatment=="D",]$ref.mn<-mean(iso.3[iso.3$treatment=="D"&iso.3$plant.type=="nonfixer",]$perc.15N)
+iso.3[iso.3$treatment=="D",]$ref.sd<-sd(iso.3[iso.3$treatment=="D"&iso.3$plant.type=="nonfixer",]$perc.15N)
+
+iters<-1000 #how many numbers to pull from the distribution based on each groups reference mean and sd
+
+fix.perc.15N<-rnorm(iters, mean= 0.3663, sd=0.005) #Creating a distribution of 
+# values for the isotopic signature of fixed N. Increasing or decreasing the sd
+# argument will increase or decrease the uncertainty in the final Ndfa calculation
+
+fixers<-unique(iso.3[iso.3$plant.type=="fixer",]$plant.num)
+ndfa.mrg<-NULL
+for(i in 1:length(fixers)){
+  temp<-iso.3[iso.3$plant.num==fixers[i],]
+  ref15N<-rnorm(iters, mean=temp$ref.mn, sd=temp$ref.sd)
+  ndfa<-100*((temp$perc.15N-ref15N)/
+               (fix.perc.15N-ref15N))
+  ndfa.dat<-data.frame(plant.num=temp$plant.num,
+                       ndfa.mn=mean(ndfa),
+                       ndfa.lci=quantile(ndfa,0.025),
+                       ndfa.uci=quantile(ndfa,0.975))
+  ndfa.mrg<-rbind(ndfa.mrg,ndfa.dat)
+}
+
+iso.3<-merge(iso.3, ndfa.mrg, by="plant.num", all.x=T)
+
+trt.summary3<-data.frame(Treatment=c("A","B","C","D"),
+                         Mean.Ndfa=with(iso.3[iso.3$plant.type=="fixer",], tapply(ndfa.mn,treatment,mean)),
+                         LCI.Ndfa=with(iso.3[iso.3$plant.type=="fixer",], tapply(ndfa.lci,treatment,mean)),
+                         UCI.Ndfa=with(iso.3[iso.3$plant.type=="fixer",], tapply(ndfa.uci,treatment,mean)))
+trt.summary3
+
